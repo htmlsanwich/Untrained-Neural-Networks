@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Ivy's Personal AI</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
+    #chatbox { height: 300px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; }
+    #userInput { width: 70%; padding: 8px; }
+    #imageUploadSection { margin-top: 10px; border: 1px dashed #ccc; padding: 10px; }
+    #imagePreview { max-width: 200px; margin-top: 10px; }
+    #imageDescription { width: 100%; padding: 8px; margin-top: 5px; }
+    button { margin-top: 5px; }
+  </style>
+</head>
+<body>
+  <h1>Ivy's Personal AI</h1>
+  <div id="chatbox"></div>
+  <input type="text" id="userInput" placeholder="Type your message...">
+  <button onclick="sendMessage()">Send</button>
+
+  <div id="imageUploadSection">
+    <h3>Teach Me with Images</h3>
+    <input type="file" id="imageUpload" accept="image/*" onchange="previewImage(event)">
+    <div id="imagePreview"></div>
+    <input type="text" id="imageDescription" placeholder="Describe this image for me...">
+    <button onclick="addImageToMemory()">Add to My Memory</button>
+  </div>
+
+  <div>
+    <button onclick="recallImageMemory()">What do you remember?</button>
+    <button onclick="downloadMemory()">Download My AI's Memory</button>
+    <button onclick="uploadMemory()">Upload My AI's Memory</button>
+    <input type="file" id="memoryUpload" accept=".json" style="display: none;" onchange="loadMemory(event)">
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xenova/transformers"></script>
+  <script>
+    // --- AI Setup ---
+    let model, tokenizer;
+    let chatMemory = [];
+    let imageMemory = [];
+
+    async function loadModel() {
+      try {
+        addMessage("AI", "Hi Ivy! I'm your personal AI. Teach me anything—text or images—and I'll remember it all for you.");
+        tokenizer = await AutoTokenizer.from_pretrained('Xenova/tiny-random-LlamaForCausalLM');
+        model = await AutoModelForCausalLM.from_pretrained('Xenova/tiny-random-LlamaForCausalLM');
+      } catch (error) {
+        addMessage("AI", "Sorry, Ivy, I'm still waking up. Try again in a moment!");
+        console.error(error);
+      }
+    }
+    loadModel();
+
+    // --- Chat Functions ---
+    function addMessage(sender, text) {
+      const chatbox = document.getElementById('chatbox');
+      chatbox.innerHTML += `<p><b>${sender}:</b> ${text}</p>`;
+      chatbox.scrollTop = chatbox.scrollHeight;
+      if (sender === "You") {
+        chatMemory.push({ role: "user", content: text, timestamp: new Date().toLocaleString() });
+      } else if (sender === "AI") {
+        chatMemory.push({ role: "ai", content: text, timestamp: new Date().toLocaleString() });
+      }
+    }
+
+    async function sendMessage() {
+      const input = document.getElementById('userInput');
+      const message = input.value;
+      if (!message) return;
+      addMessage("You", message);
+      input.value = '';
+
+      // Check if the user is asking about past chats or images
+      const lowerMsg = message.toLowerCase();
+      if (lowerMsg.includes("what did i teach you") || lowerMsg.includes("what do you remember")) {
+        if (chatMemory.length > 0) {
+          const lastChat = chatMemory[chatMemory.length - 2];
+          addMessage("AI", `You taught me: "${lastChat.content}" at ${lastChat.timestamp}.`);
+        } else {
+          addMessage("AI", "I don't remember any chats yet, Ivy. Teach me something!");
+        }
+        return;
+      }
+
+      // Normal chat
+      try {
+        const inputs = tokenizer(message, { return_tensors: 'pt' });
+        const outputs = await model.generate(inputs.input_ids, { max_new_tokens: 50 });
+        const reply = tokenizer.decode(outputs[0], { skip_special_tokens: true });
+        addMessage("AI", reply);
+      } catch (error) {
+        addMessage("AI", "I'm still learning, Ivy. Try again!");
+        console.error(error);
+      }
+    }
+
+    // --- Image Memory ---
+    function previewImage(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const img = document.createElement('img');
+        img.src = e.target.result;
+        img.style.maxWidth = '200px';
+        document.getElementById('imagePreview').innerHTML = '';
+        document.getElementById('imagePreview').appendChild(img);
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function addImageToMemory() {
+      const fileInput = document.getElementById('imageUpload');
+      const descriptionInput = document.getElementById('imageDescription');
+      const description = descriptionInput.value;
+
+      if (!fileInput.files[0]) {
+        addMessage("AI", "Please upload an image first, Ivy.");
+        return;
+      }
+      if (!description) {
+        addMessage("AI", "Please describe the image for me, Ivy.");
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const imageData = e.target.result;
+        imageMemory.push({
+          image: imageData,
+          description: description,
+          timestamp: new Date().toLocaleString()
+        });
+        addMessage("AI", `Thanks, Ivy! I've remembered this image as: "${description}".`);
+        descriptionInput.value = '';
+        fileInput.value = '';
+        document.getElementById('imagePreview').innerHTML = '';
+      };
+      reader.readAsDataURL(fileInput.files[0]);
+    }
+
+    function recallImageMemory() {
+      if (imageMemory.length === 0) {
+        addMessage("AI", "I haven't learned from any images yet, Ivy.");
+        return;
+      }
+      const lastImage = imageMemory[imageMemory.length - 1];
+      addMessage("AI", `I remember you taught me about an image: "${lastImage.description}" at ${lastImage.timestamp}.`);
+    }
+
+    // --- Memory Download/Upload ---
+    function downloadMemory() {
+      const data = JSON.stringify({ chatMemory, imageMemory });
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'ivy-ai-memory.json';
+      a.click();
+      addMessage("AI", "Your AI memory has been downloaded, Ivy! Save it somewhere safe.");
+    }
+
+    function uploadMemory() {
+      document.getElementById('memoryUpload').click();
+    }
+
+    function loadMemory(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const data = JSON.parse(e.target.result);
+          chatMemory = data.chatMemory || [];
+          imageMemory = data.imageMemory || [];
+          addMessage("AI", `Your AI memory has been loaded, Ivy! I remember ${chatMemory.length} chats and ${imageMemory.length} images.`);
+        } catch (error) {
+          addMessage("AI", "Sorry, Ivy, I couldn't load that memory file.");
+          console.error(error);
+        }
+      };
+      reader.readAsText(file);
+    }
+  </script>
+</body>
+</html>
